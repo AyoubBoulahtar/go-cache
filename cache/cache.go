@@ -8,43 +8,50 @@ import (
 const DefaultExpiration = 10 * time.Minute
 
 type item[V any] struct {
-	value V
-	ttl   time.Time
+	value     V
+	expiresAt time.Time
 }
 
 type Cache[K comparable, V any] struct {
-	mu         sync.RWMutex
-	items      map[K]item[V]
-	defaultTTL time.Duration
+	mu          sync.RWMutex
+	items       map[K]item[V]
+	defaultTTL  time.Duration
+	stopJanitor chan struct{}
 }
 
 func NewCache[K comparable, V any](cleanupInterval time.Duration) *Cache[K, V] {
 	c := &Cache[K, V]{
-		items:      make(map[K]item[V]),
-		defaultTTL: DefaultExpiration,
+		items:       make(map[K]item[V]),
+		defaultTTL:  DefaultExpiration,
+		stopJanitor: make(chan struct{}),
 	}
 
-	go c.janitor(cleanupInterval)
+	if cleanupInterval > 0 {
+		go c.janitor(cleanupInterval)
+	}
+
 	return c
 }
 
 func (c *Cache[K, V]) Get(key K) (V, bool) {
 	now := time.Now()
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	item, ok := c.items[key]
-
+	entry, ok := c.items[key]
 	if !ok {
 		var zero V
 		return zero, false
 	}
-	if now.After(item.ttl) {
-		c.Delete(key)
+
+	if now.After(entry.expiresAt) {
+		delete(c.items, key)
 		var zero V
 		return zero, false
 	}
-	return item.value, true
+
+	return entry.value, true
 }
 
 func (c *Cache[K, V]) Set(key K, value V) {
@@ -55,7 +62,10 @@ func (c *Cache[K, V]) SetWithExpiration(key K, value V, expiration time.Duration
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.items[key] = item[V]{value: value, ttl: time.Now().Add(expiration)}
+	c.items[key] = item[V]{
+		value:     value,
+		expiresAt: time.Now().Add(expiration),
+	}
 }
 
 func (c *Cache[K, V]) Delete(key K) {
@@ -67,12 +77,31 @@ func (c *Cache[K, V]) Delete(key K) {
 
 func (c *Cache[K, V]) DeleteExpired() {
 	now := time.Now()
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	for key, item := range c.items {
-		if now.After(item.ttl) {
+	for key, entry := range c.items {
+		if now.After(entry.expiresAt) {
 			delete(c.items, key)
 		}
 	}
+}
+
+func (c *Cache[K, V]) janitor(cleanupInterval time.Duration) {
+	ticker := time.NewTicker(cleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			c.DeleteExpired()
+		case <-c.stopJanitor:
+			return
+		}
+	}
+}
+
+func (c *Cache[K, V]) Close() {
+	close(c.stopJanitor)
 }
