@@ -18,14 +18,18 @@ type Cache[K comparable, V any] struct {
 	defaultTTL time.Duration
 }
 
-func NewCache[K comparable, V any]() *Cache[K, V] {
-	return &Cache[K, V]{
+func NewCache[K comparable, V any](cleanupInterval time.Duration) *Cache[K, V] {
+	c := &Cache[K, V]{
 		items:      make(map[K]item[V]),
 		defaultTTL: DefaultExpiration,
 	}
+
+	go c.janitor(cleanupInterval)
+	return c
 }
 
 func (c *Cache[K, V]) Get(key K) (V, bool) {
+	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -35,7 +39,7 @@ func (c *Cache[K, V]) Get(key K) (V, bool) {
 		var zero V
 		return zero, false
 	}
-	if time.Now().After(item.ttl) {
+	if now.After(item.ttl) {
 		c.Delete(key)
 		var zero V
 		return zero, false
@@ -59,4 +63,16 @@ func (c *Cache[K, V]) Delete(key K) {
 	defer c.mu.Unlock()
 
 	delete(c.items, key)
+}
+
+func (c *Cache[K, V]) DeleteExpired() {
+	now := time.Now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for key, item := range c.items {
+		if now.After(item.ttl) {
+			delete(c.items, key)
+		}
+	}
 }
