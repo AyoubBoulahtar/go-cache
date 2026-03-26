@@ -103,7 +103,7 @@ func (c *Cache[K, V]) Get(key K) (V, bool) {
 		return zero, false
 	}
 
-	if time.Now().After(entry.expiresAt) {
+	if !now.Before(entry.expiresAt) {
 		delete(c.items, key)
 		var zero V
 		return zero, false
@@ -149,7 +149,7 @@ func (c *Cache[K, V]) DeleteExpired() {
 	defer c.mu.Unlock()
 
 	for key, entry := range c.items {
-		if now.After(entry.expiresAt) {
+		if !now.Before(entry.expiresAt) {
 			delete(c.items, key)
 		}
 	}
@@ -159,6 +159,19 @@ func (c *Cache[K, V]) Len() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return len(c.items)
+}
+
+func (c *Cache[K, V]) LenUnexpired() int {
+	now := time.Now()
+	count := 0
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, entry := range c.items {
+		if now.Before(entry.expiresAt) {
+			count++
+		}
+	}
+	return count
 }
 
 func (c *Cache[K, V]) Clear() {
