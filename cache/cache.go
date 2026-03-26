@@ -7,8 +7,6 @@ import (
 
 const DefaultExpiration = 10 * time.Minute
 
-type Option func(*config)
-
 type Cache[K comparable, V any] struct {
 	mu          sync.RWMutex
 	items       map[K]item[V]
@@ -16,6 +14,8 @@ type Cache[K comparable, V any] struct {
 	stopJanitor chan struct{}
 	closeOnce   sync.Once
 }
+
+type Option func(*config)
 
 type config struct {
 	defaultTTL              time.Duration
@@ -112,6 +112,11 @@ func (c *Cache[K, V]) Get(key K) (V, bool) {
 	return entry.value, true
 }
 
+func (c *Cache[K, V]) Has(key K) bool {
+	_, ok := c.Get(key)
+	return ok
+}
+
 func (c *Cache[K, V]) Set(key K, value V) {
 	c.SetWithExpiration(key, value, c.defaultTTL)
 }
@@ -128,11 +133,6 @@ func (c *Cache[K, V]) SetWithExpiration(key K, value V, expiration time.Duration
 		value:     value,
 		expiresAt: time.Now().Add(expiration),
 	}
-}
-
-func (c *Cache[K, V]) Has(key K) bool {
-	_, ok := c.Get(key)
-	return ok
 }
 
 func (c *Cache[K, V]) Delete(key K) {
@@ -177,6 +177,20 @@ func (c *Cache[K, V]) Close() {
 	})
 }
 
+func (c *Cache[K, V]) janitor(cleanupInterval time.Duration) {
+	ticker := time.NewTicker(cleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			c.DeleteExpired()
+		case <-c.stopJanitor:
+			return
+		}
+	}
+}
+
 func defaultConfig() config {
 	ttl := DefaultExpiration
 	return config{
@@ -196,18 +210,4 @@ func deriveCleanupInterval(ttl time.Duration) time.Duration {
 		cleanupInterval = 5 * time.Minute
 	}
 	return cleanupInterval
-}
-
-func (c *Cache[K, V]) janitor(cleanupInterval time.Duration) {
-	ticker := time.NewTicker(cleanupInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			c.DeleteExpired()
-		case <-c.stopJanitor:
-			return
-		}
-	}
 }
