@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/AyoubBoulahtar/go-cache/cache"
+	"github.com/ayoubboulahtar/go-cache/cache"
 )
 
 func main() {
